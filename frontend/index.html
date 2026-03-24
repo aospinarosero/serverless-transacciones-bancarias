@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transacciones Bancarias - App Serverless</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; color: #1a1a2e; }
+        header { background: linear-gradient(135deg, #0f3460, #16213e); color: white; padding: 24px 40px; }
+        header h1 { font-size: 1.6rem; font-weight: 600; }
+        header p { font-size: 0.85rem; opacity: 0.8; margin-top: 4px; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        .search-section { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+        .search-box { background: white; border-radius: 8px; padding: 16px 20px; flex: 1; min-width: 280px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .search-box label { display: block; font-size: 0.8rem; font-weight: 600; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .search-box .input-group { display: flex; gap: 8px; }
+        .search-box input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+        .search-box input:focus { border-color: #0f3460; }
+        .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: #0f3460; color: white; }
+        .btn-primary:hover { background: #16213e; }
+        .btn-all { background: #e94560; color: white; }
+        .btn-all:hover { background: #c73650; }
+        .status-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 0 4px; }
+        .status-bar span { font-size: 0.85rem; color: #666; }
+        .table-wrapper { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+        thead th { background: #16213e; color: white; padding: 12px 14px; text-align: left; font-weight: 600; white-space: nowrap; position: sticky; top: 0; }
+        tbody tr { border-bottom: 1px solid #eee; transition: background 0.15s; }
+        tbody tr:hover { background: #f8f9ff; }
+        tbody td { padding: 10px 14px; white-space: nowrap; }
+        .amount { font-weight: 600; text-align: right; }
+        .status-aprobada { color: #0a8754; font-weight: 600; }
+        .status-rechazada { color: #d63031; font-weight: 600; }
+        .status-pendiente { color: #e17055; font-weight: 600; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 4px; padding: 16px; }
+        .pagination button { min-width: 36px; height: 36px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+        .pagination button.active { background: #0f3460; color: white; border-color: #0f3460; }
+        .pagination button:hover:not(.active) { background: #f0f2f5; }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .loading .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid #ddd; border-top-color: #0f3460; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error { text-align: center; padding: 20px; color: #d63031; background: #ffeaea; border-radius: 8px; margin-bottom: 16px; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Transacciones Bancarias Colombia</h1>
+        <p>Aplicacion Serverless — AWS Lambda + DynamoDB + API Gateway + S3</p>
+    </header>
+
+    <div class="container">
+        <div class="search-section">
+            <div class="search-box">
+                <label>Buscar por ID de Transaccion</label>
+                <div class="input-group">
+                    <input type="text" id="searchId" placeholder="Ej: TXN-000001" onkeydown="if(event.key==='Enter') searchById()">
+                    <button class="btn btn-primary" onclick="searchById()">Buscar</button>
+                </div>
+            </div>
+            <div class="search-box">
+                <label>Buscar por Nombre de Cliente</label>
+                <div class="input-group">
+                    <input type="text" id="searchClient" placeholder="Ej: Roberto Suarez" onkeydown="if(event.key==='Enter') searchByClient()">
+                    <button class="btn btn-primary" onclick="searchByClient()">Buscar</button>
+                </div>
+            </div>
+            <div class="search-box" style="display:flex; align-items:flex-end; flex:0;">
+                <button class="btn btn-all" onclick="loadAll()">Cargar Todas</button>
+            </div>
+        </div>
+
+        <div id="error" class="error" style="display:none;"></div>
+
+        <div class="status-bar">
+            <span id="resultCount"></span>
+            <span id="pageInfo"></span>
+        </div>
+
+        <div class="table-wrapper">
+            <div id="loading" class="loading" style="display:none;">
+                <div class="spinner"></div>
+                <p style="margin-top:12px;">Cargando transacciones...</p>
+            </div>
+            <div id="emptyState" class="empty">Usa los filtros de busqueda o haz clic en "Cargar Todas"</div>
+            <table id="resultsTable" style="display:none;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Cliente</th>
+                        <th>Tipo</th>
+                        <th>Categoria</th>
+                        <th>Monto (COP)</th>
+                        <th>Banco</th>
+                        <th>Comercio</th>
+                        <th>Ciudad</th>
+                        <th>Estado</th>
+                        <th>Fecha</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+        <div id="pagination" class="pagination"></div>
+    </div>
+
+<script>
+    // ====== CONFIGURACION ======
+    // Reemplazar con la URL real del API Gateway despues del despliegue
+    const API_URL = 'https://ep21yx7y2c.execute-api.us-east-1.amazonaws.com/prod';
+    const PAGE_SIZE = 20;
+    // ===========================
+
+    let allData = [];
+    let currentPage = 1;
+
+    function showLoading() {
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('resultsTable').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'none';
+        document.getElementById('error').style.display = 'none';
+        document.getElementById('pagination').innerHTML = '';
+        document.getElementById('resultCount').textContent = '';
+        document.getElementById('pageInfo').textContent = '';
+    }
+
+    function showError(msg) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error').textContent = msg;
+    }
+
+    function formatAmount(value) {
+        const num = parseFloat(value);
+        return isNaN(num) ? value : '$ ' + num.toLocaleString('es-CO', { minimumFractionDigits: 2 });
+    }
+
+    function statusClass(status) {
+        if (!status) return '';
+        const s = status.toLowerCase();
+        if (s === 'aprobada') return 'status-aprobada';
+        if (s === 'rechazada') return 'status-rechazada';
+        if (s === 'pendiente') return 'status-pendiente';
+        return '';
+    }
+
+    function renderTable(data) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'none';
+
+        if (!data || data.length === 0) {
+            document.getElementById('emptyState').style.display = 'block';
+            document.getElementById('emptyState').textContent = 'No se encontraron resultados.';
+            document.getElementById('resultsTable').style.display = 'none';
+            document.getElementById('pagination').innerHTML = '';
+            document.getElementById('resultCount').textContent = '0 resultados';
+            document.getElementById('pageInfo').textContent = '';
+            return;
+        }
+
+        allData = data;
+        currentPage = 1;
+        document.getElementById('resultCount').textContent = data.length + ' transaccion(es) encontrada(s)';
+        renderPage();
+    }
+
+    function renderPage() {
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, allData.length);
+        const pageData = allData.slice(start, end);
+        const totalPages = Math.ceil(allData.length / PAGE_SIZE);
+
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+
+        pageData.forEach(t => {
+            const row = document.createElement('tr');
+            row.innerHTML =
+                '<td>' + (t.transactionId || '') + '</td>' +
+                '<td>' + (t.clientName || '') + '</td>' +
+                '<td>' + (t.transactionType || '') + '</td>' +
+                '<td>' + (t.category || '') + '</td>' +
+                '<td class="amount">' + formatAmount(t.amount) + '</td>' +
+                '<td>' + (t.bank || '') + '</td>' +
+                '<td>' + (t.merchant || '') + '</td>' +
+                '<td>' + (t.city || '') + '</td>' +
+                '<td class="' + statusClass(t.status) + '">' + (t.status || '') + '</td>' +
+                '<td>' + (t.transactionDate || '') + '</td>';
+            tbody.appendChild(row);
+        });
+
+        document.getElementById('resultsTable').style.display = 'table';
+        document.getElementById('pageInfo').textContent = 'Pagina ' + currentPage + ' de ' + totalPages;
+
+        // Pagination controls
+        const paginationDiv = document.getElementById('pagination');
+        paginationDiv.innerHTML = '';
+        if (totalPages <= 1) return;
+
+        const maxButtons = 7;
+        let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+        let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+        if (endPage - startPage < maxButtons - 1) {
+            startPage = Math.max(1, endPage - maxButtons + 1);
+        }
+
+        if (currentPage > 1) {
+            const prev = document.createElement('button');
+            prev.textContent = '<';
+            prev.onclick = function() { currentPage--; renderPage(); };
+            paginationDiv.appendChild(prev);
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const btn = document.createElement('button');
+            btn.textContent = i;
+            if (i === currentPage) btn.className = 'active';
+            btn.onclick = (function(page) { return function() { currentPage = page; renderPage(); }; })(i);
+            paginationDiv.appendChild(btn);
+        }
+
+        if (currentPage < totalPages) {
+            const next = document.createElement('button');
+            next.textContent = '>';
+            next.onclick = function() { currentPage++; renderPage(); };
+            paginationDiv.appendChild(next);
+        }
+    }
+
+    async function loadAll() {
+        showLoading();
+        try {
+            const res = await fetch(API_URL + '/transactions');
+            if (!res.ok) throw new Error('Error HTTP ' + res.status);
+            const data = await res.json();
+            renderTable(data);
+        } catch (e) {
+            showError('Error al cargar transacciones: ' + e.message);
+        }
+    }
+
+    async function searchById() {
+        const id = document.getElementById('searchId').value.trim();
+        if (!id) return;
+        showLoading();
+        try {
+            const res = await fetch(API_URL + '/transactions/' + encodeURIComponent(id));
+            if (res.status === 404) {
+                renderTable([]);
+                return;
+            }
+            if (!res.ok) throw new Error('Error HTTP ' + res.status);
+            const data = await res.json();
+            renderTable(Array.isArray(data) ? data : [data]);
+        } catch (e) {
+            showError('Error al buscar por ID: ' + e.message);
+        }
+    }
+
+    async function searchByClient() {
+        const name = document.getElementById('searchClient').value.trim();
+        if (!name) return;
+        showLoading();
+        try {
+            const res = await fetch(API_URL + '/transactions/search?clientName=' + encodeURIComponent(name));
+            if (!res.ok) throw new Error('Error HTTP ' + res.status);
+            const data = await res.json();
+            renderTable(data);
+        } catch (e) {
+            showError('Error al buscar por cliente: ' + e.message);
+        }
+    }
+</script>
+</body>
+</html>
